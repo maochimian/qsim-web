@@ -410,17 +410,20 @@
         isAITyping = true; processAIResponse(userQ, botMsg);
       }
     
-  // 🚀 终极版流式架构 (带有物理引擎自动纠偏)
+  // 🚀 DeepSeek 驱动版流式架构 (带有物理引擎自动纠偏)
       async function processAIResponse(q, botMsg) {
-        // ⚠️ 在这里填入你的智谱 API Key
-        const apiKey = "7110c715723845d5a78ce22af70ad93d.PvegS0946vuEaPeM"; 
+        // ⚠️ 在这里填入你的 DeepSeek API Key
+        const apiKey = "sk-89dff814b3124398b471fa8c0790e36d"; 
         
-        const apiUrl = "[https://open.bigmodel.cn/api/paas/v4/chat/completions](https://open.bigmodel.cn/api/paas/v4/chat/completions)"; const modelName = "glm-4-flash"; 
+        // 🛑 [修改点 1：使用 DeepSeek 官方接口地址]
+        const apiUrl = "https://api.deepseek.com/chat/completions"; 
+        // 🛑 [修改点 2：使用 DeepSeek V3 核心模型]
+        const modelName = "deepseek-chat"; 
 
         const currentType = type.value; const currentRpm = rpm.value;
         const cL1 = params.l1.value; const cL2 = params.l2.value; const cL3 = params.l3.value; const cL4 = params.l4.value;
 
-        // 🛑 [修复 1：强化提示词，严禁 AI 生成非法格式]
+        // 提示词保持原有的强力约束
         const systemPrompt = `你是一个顶级机械动力学AI专家。
 【当前状态】拓扑: ${currentType} | 转速: ${currentRpm}RPM | L1: ${cL1} | L2: ${cL2} | L3: ${cL3} | L4: ${cL4}
 【强制物理规则】
@@ -436,10 +439,19 @@
         try {
           const response = await fetch(apiUrl, { 
               method: 'POST', 
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` }, 
-              body: JSON.stringify({ model: modelName, messages: messagesPayload, temperature: 0.1, stream: true }) 
+              headers: { 
+                  'Content-Type': 'application/json', 
+                  'Authorization': `Bearer ${apiKey}` 
+              }, 
+              body: JSON.stringify({ 
+                  model: modelName, 
+                  messages: messagesPayload, 
+                  temperature: 0.1, // 极低的温度，保证 DeepSeek 输出格式严格
+                  stream: true 
+              }) 
           });
-          if (!response.ok) throw new Error(`API 请求失败`);
+          
+          if (!response.ok) throw new Error(`API 请求失败: ${response.status}`);
 
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8");
           let fullText = ""; let isCmdParsed = false; botMsg.isThinking = false;
@@ -454,11 +466,12 @@
                 if (data.choices[0].delta.content) {
                    fullText += data.choices[0].delta.content;
                    
+                   // 拦截器：提取指令并瞬间重组画板
                    if (!isCmdParsed && fullText.includes('</cmd>')) {
                        const cmdMatch = fullText.match(/<cmd>([\s\S]*?)<\/cmd>/);
                        if (cmdMatch) {
                            try {
-                               // 🛑 [修复 2：剥离 AI 乱加的 Markdown 代码块]
+                               // 剥离 Markdown 代码块干扰
                                let jsonStr = cmdMatch[1].replace(/```json/gi, '').replace(/```/gi, '').trim();
                                const parsedData = JSON.parse(jsonStr);
                                
@@ -467,13 +480,13 @@
                                else if (parsedData.command === 'play') { isRunning.value = true; toastContent = '▶️ 系统已启动'; }
                                else if (parsedData.command === 'export') { exportSVG(); toastContent = '📐 正在出图'; }
 
-                               // 🛑 [修复 3：强力类型白名单过滤]
+                               // 类型白名单过滤
                                const validTypes = ['crank-rocker', 'double-rocker', 'slider-crank', 'offset-slider', 'quick-return', 'crank-swing-guide', 'parallelogram'];
                                if (validTypes.includes(parsedData.type)) type.value = parsedData.type;
                                else if (String(parsedData.type).includes('滑块') || String(parsedData.type).includes('活塞')) type.value = 'slider-crank';
                                else type.value = currentType; 
 
-                               // 🛑 [修复 4：绝对安全的数字转换器（防 NaN 崩溃）]
+                               // 绝对安全的数字转换器（防 NaN 崩溃）
                                const safeParse = (val, fallback, min, max) => {
                                    let n = parseFloat(val);
                                    if (isNaN(n)) n = parseFloat(fallback);
@@ -487,16 +500,14 @@
                                params.l3.value = safeParse(parsedData.l3, cL3, params.l3.min, params.l3.max);
                                params.l4.value = safeParse(parsedData.l4, cL4, params.l4.min, params.l4.max);
 
-                               // 🛑 [修复 5：核心！物理几何强制纠偏机制，彻底防止机构断链消失！]
+                               // 物理几何强制纠偏机制
                                if (type.value === 'slider-crank' || type.value === 'offset-slider') {
                                    if (params.l2.value <= params.l1.value + 10) {
-                                       params.l2.value = params.l1.value * 2.5; // 如果连杆比曲柄还短，强行拉长连杆！
-                                       console.log("拦截到 AI 的反物理参数，已强制拉长连杆 L2 以防断链");
+                                       params.l2.value = params.l1.value * 2.5; 
                                    }
                                } else if (type.value === 'crank-rocker' || type.value === 'double-rocker') {
                                    const lengths = [params.l1.value, params.l2.value, params.l3.value, params.l4.value].sort((a,b)=>a-b);
                                    if (lengths[3] >= lengths[0] + lengths[1] + lengths[2]) {
-                                       // 发生严重四杆断链，强行注入默认安全参数
                                        params.l1.value = 80; params.l2.value = 180; params.l3.value = 140; params.l4.value = 220;
                                    }
                                }
@@ -510,6 +521,7 @@
                        }
                    }
                    
+                   // 提取人类语言并流式显示
                    if (isCmdParsed && fullText.includes('<msg>')) {
                        const msgMatch = fullText.split('<msg>')[1];
                        if (msgMatch) {
@@ -524,7 +536,7 @@
           }
           isAITyping = false;
         } catch (error) {
-          console.error(error); botMsg.text = "⚠️ 网络连接失败。请检查 API Key。"; isAITyping = false;
+          console.error(error); botMsg.text = "⚠️ 网络连接失败。请检查 DeepSeek API Key。"; isAITyping = false;
         }
       }
 
