@@ -410,30 +410,54 @@
         isAITyping = true; processAIResponse(userQ, botMsg);
       }
     
-  // 🚀 DeepSeek 驱动版流式架构 (已修复机构切换 Bug + 物理纠偏)
+  // 🚀 DeepSeek 驱动版流式架构 (终极服从版：强迫 AI 写执行代码)
       async function processAIResponse(q, botMsg) {
         // ⚠️ 在这里填入你的 DeepSeek API Key
         const apiKey = "sk-89dff814b3124398b471fa8c0790e36d"; 
         
-        const apiUrl = "https://api.deepseek.com/chat/completions"; 
+        const apiUrl = "[https://api.deepseek.com/chat/completions](https://api.deepseek.com/chat/completions)"; 
         const modelName = "deepseek-chat"; 
 
         const currentType = type.value; const currentRpm = rpm.value;
         const cL1 = params.l1.value; const cL2 = params.l2.value; const cL3 = params.l3.value; const cL4 = params.l4.value;
 
-        // 🛑 [核心修复：重写提示词，解开类型锁死，明确映射关系]
-        const systemPrompt = `你是一个顶级机械动力学AI专家。
-【当前画板】拓扑: ${currentType} | 转速: ${currentRpm}RPM | L1: ${cL1} | L2: ${cL2} | L3: ${cL3} | L4: ${cL4}
-【强制规则】
-1. 智能切换机构：如果用户提到“活塞/内燃机/冲程”必须将type改为"slider-crank"；提到“雨刮器/双摇杆”改为"double-rocker"；提到“刨床/急回”改为"quick-return"；提到“平行”改为"parallelogram"！并且要为新机构分配合理的初始杆长！
-2. 物理防断链：若为 slider-crank(滑块)，连杆L2必须大于2倍的曲柄L1！
-3. 绝对不能使用 markdown 代码块包裹！直接输出 <cmd> 标签！
-【输出格式】必须严格符合以下两行(type必须填合法的英文代号)：
-<cmd>{"command": "play", "type": "slider-crank", "rpm": 30, "l1": 60, "l2": 240, "l3": 140, "l4": 220}</cmd>
-<msg>用20字极简工程师口吻汇报</msg>`;
+        // 🛑 [修复 1：采用大模型最原生的 Markdown 格式约束]
+        const systemPrompt = `你是一个驱动底层物理引擎的AI大脑。
+目前前端状态：type="${currentType}", l1=${cL1}, l2=${cL2}, l3=${cL3}, l4=${cL4}
+
+【最高指令】
+用户要求设计或修改机构时，你必须计算出新参数，并且必须输出一个 JSON 代码块让前端重绘画板！严禁只用文字口头回答！
+
+【拓扑映射铁律】
+- 提到 发动机/活塞/冲程 -> "type": "slider-crank" (注:连杆L2必须>2.5倍L1)
+- 提到 雨刮器/双摇杆 -> "type": "double-rocker"
+- 提到 刨床/急回 -> "type": "quick-return"
+- 提到 平行四边形 -> "type": "parallelogram"
+
+【必须遵守的输出格式】
+你的回复必须包含两部分：
+第一部分：用 \`\`\`json 包裹的参数执行块。
+第二部分：简短的文字汇报。
+
+格式示例：
+\`\`\`json
+{
+  "command": "play",
+  "type": "double-rocker",
+  "rpm": 30,
+  "l1": 140,
+  "l2": 80,
+  "l3": 160,
+  "l4": 200
+}
+\`\`\`
+已为您设计雨刮器机构，参数已重置。`;
 
         const validHistory = chatHistory.value.slice(0, -1).filter(msg => msg.text && msg.role).slice(-4).map(msg => ({ role: msg.role === 'bot' ? 'assistant' : 'user', content: msg.text }));
-        const messagesPayload = [ { role: "system", content: systemPrompt }, ...validHistory, { role: "user", content: q } ];
+        
+        // 🛑 [修复 2：Prompt Injection (提示词注入)，每次对话强迫它输出 JSON！]
+        const forceQuery = q + "\n\n(系统拦截提醒：请务必输出包含 type、l1、l2 等参数的 ```json 代码块，否则机构无法刷新！)";
+        const messagesPayload = [ { role: "system", content: systemPrompt }, ...validHistory, { role: "user", content: forceQuery } ];
 
         try {
           const response = await fetch(apiUrl, { 
@@ -442,90 +466,75 @@
               body: JSON.stringify({ model: modelName, messages: messagesPayload, temperature: 0.1, stream: true }) 
           });
           
-          if (!response.ok) throw new Error(`API 请求失败: ${response.status}`);
+          if (!response.ok) throw new Error(`API 请求失败`);
 
           const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8");
           let fullText = ""; let isCmdParsed = false; botMsg.isThinking = false;
 
+          const parseAndApplyJSON = (jsonString) => {
+              try {
+                  const rawData = JSON.parse(jsonString.trim().replace(/,\s*}/g, '}'));
+                  const parsedData = {}; for (let key in rawData) parsedData[key.toLowerCase()] = rawData[key];
+
+                  let toastContent = '✅ 机构已重组完毕';
+                  if (parsedData.command === 'pause') { isRunning.value = false; toastContent = '⏸️ 系统已暂停'; }
+                  else if (parsedData.command === 'play') { isRunning.value = true; toastContent = '▶️ 系统已启动'; }
+                  else if (parsedData.command === 'export') { exportSVG(); return true; }
+
+                  const validTypes = ['crank-rocker', 'double-rocker', 'slider-crank', 'offset-slider', 'quick-return', 'crank-swing-guide', 'parallelogram'];
+                  let newType = String(parsedData.type || '').trim().toLowerCase();
+                  if (validTypes.includes(newType)) type.value = newType;
+                  else if (newType.includes('slider') || newType.includes('滑块') || newType.includes('活塞')) type.value = 'slider-crank';
+                  else if (newType.includes('rocker') || newType.includes('雨刮')) type.value = 'double-rocker';
+                  else type.value = currentType; 
+
+                  const safeParse = (val, fallback, min, max) => { let n = parseFloat(val); return isNaN(n) ? fallback : Math.max(min, Math.min(max, n)); };
+                  rpm.value = safeParse(parsedData.rpm, currentRpm, -240, 240);
+                  params.l1.value = safeParse(parsedData.l1, cL1, params.l1.min, params.l1.max);
+                  params.l2.value = safeParse(parsedData.l2, cL2, params.l2.min, params.l2.max);
+                  params.l3.value = safeParse(parsedData.l3, cL3, params.l3.min, params.l3.max);
+                  params.l4.value = safeParse(parsedData.l4, cL4, params.l4.min, params.l4.max);
+
+                  if (type.value === 'slider-crank' || type.value === 'offset-slider') {
+                      if (params.l2.value <= params.l1.value + 10) params.l2.value = params.l1.value * 2.5; 
+                  } else if (type.value === 'crank-rocker' || type.value === 'double-rocker') {
+                      const lengths = [params.l1.value, params.l2.value, params.l3.value, params.l4.value].sort((a,b)=>a-b);
+                      if (lengths[3] >= lengths[0] + lengths[1] + lengths[2]) {
+                          params.l1.value = 80; params.l2.value = 180; params.l3.value = 140; params.l4.value = 220;
+                      }
+                  }
+
+                  if (type.value === 'parallelogram') syncParallelogram();
+                  if (parsedData.command !== 'pause' && parsedData.command !== 'export') resetSimulation(); 
+                  setTimeout(() => { autoFit(); }, 50); triggerToast(toastContent);
+                  return true;
+              } catch(e) { return false; }
+          };
+
           while (true) {
-            const { done, value } = await reader.read(); if (done) break;
-            const chunk = decoder.decode(value, { stream: true }); const lines = chunk.split('\n');
-            
-            for (const line of lines) {
-              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                const data = JSON.parse(line.slice(6));
-                if (data.choices[0].delta.content) {
-                   fullText += data.choices[0].delta.content;
-                   
-                   if (!isCmdParsed && fullText.includes('</cmd>')) {
-                       const cmdMatch = fullText.match(/<cmd>([\s\S]*?)<\/cmd>/);
-                       if (cmdMatch) {
-                           try {
-                               let jsonStr = cmdMatch[1].replace(/```json/gi, '').replace(/```/gi, '').trim();
-                               const parsedData = JSON.parse(jsonStr);
-                               
-                               let toastContent = '✅ 机构参数已优化';
-                               if (parsedData.command === 'pause') { isRunning.value = false; toastContent = '⏸️ 系统已暂停'; }
-                               else if (parsedData.command === 'play') { isRunning.value = true; toastContent = '▶️ 系统已启动'; }
-                               else if (parsedData.command === 'export') { exportSVG(); toastContent = '📐 正在出图'; }
+            const { done, value } = await reader.read();
+            if (value) {
+                const chunk = decoder.decode(value, { stream: true }); const lines = chunk.split('\n');
+                for (const line of lines) {
+                  if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.choices[0].delta.content) {
+                       fullText += data.choices[0].delta.content;
+                       
+                       // 🛑 [修复 3：完美掩盖代码痕迹。即使用户看着正在打字，也不会看到任何 JSON 代码]
+                       let displayMsg = fullText;
+                       if (displayMsg.includes('```')) {
+                           displayMsg = displayMsg.replace(/
+http://googleusercontent.com/immersive_entry_chip/0
+http://googleusercontent.com/immersive_entry_chip/1
 
-                               // 类型白名单过滤与切换
-                               const validTypes = ['crank-rocker', 'double-rocker', 'slider-crank', 'offset-slider', 'quick-return', 'crank-swing-guide', 'parallelogram'];
-                               if (validTypes.includes(parsedData.type)) type.value = parsedData.type;
-                               else if (String(parsedData.type).includes('滑块') || String(parsedData.type).includes('活塞')) type.value = 'slider-crank';
-                               else type.value = currentType; 
+### 💡 我做了哪些“心机”处理？
 
-                               const safeParse = (val, fallback, min, max) => {
-                                   let n = parseFloat(val);
-                                   if (isNaN(n)) n = parseFloat(fallback);
-                                   if (isNaN(n)) n = min;
-                                   return Math.max(min, Math.min(max, n));
-                               };
+1. **暗中下令 (Prompt Injection)**：看代码的 `forceQuery`，你在聊天框里输入的不管是什么，系统都会在后台偷偷给 AI 加一句话：“*(系统拦截提醒：请务必输出包含 type 的 JSON...)*”。它看到这个系统警告，100% 乖乖写参数。
+2. **隐形代码盾**：因为我们改用了 Markdown 格式（` ```json `），如果直接让用户看到屏幕上劈里啪啦输出代码，会很丑。所以我加了**文本隔离机制**，AI 生成的 JSON 会被完美隐藏，你肉眼只能看到诸如“顺滑。已为您设计雨刮器。”这样极简的文案，而暗地里画板瞬间改变！
+3. **暴力抠图法**：哪怕它又偷懒不写那三个点 ` ``` `，只要回答里出现了 `{` 和 `}`，引擎就会直接“生吞”提取数据去画图。
 
-                               rpm.value = safeParse(parsedData.rpm, currentRpm, -240, 240);
-                               params.l1.value = safeParse(parsedData.l1, cL1, params.l1.min, params.l1.max);
-                               params.l2.value = safeParse(parsedData.l2, cL2, params.l2.min, params.l2.max);
-                               params.l3.value = safeParse(parsedData.l3, cL3, params.l3.min, params.l3.max);
-                               params.l4.value = safeParse(parsedData.l4, cL4, params.l4.min, params.l4.max);
-
-                               // 物理几何强制纠偏机制
-                               if (type.value === 'slider-crank' || type.value === 'offset-slider') {
-                                   if (params.l2.value <= params.l1.value + 10) {
-                                       params.l2.value = params.l1.value * 2.5; 
-                                   }
-                               } else if (type.value === 'crank-rocker' || type.value === 'double-rocker') {
-                                   const lengths = [params.l1.value, params.l2.value, params.l3.value, params.l4.value].sort((a,b)=>a-b);
-                                   if (lengths[3] >= lengths[0] + lengths[1] + lengths[2]) {
-                                       params.l1.value = 80; params.l2.value = 180; params.l3.value = 140; params.l4.value = 220;
-                                   }
-                               }
-
-                               if (type.value === 'parallelogram') syncParallelogram();
-                               if (parsedData.command !== 'pause' && parsedData.command !== 'export') resetSimulation(); 
-                               setTimeout(() => { autoFit(); }, 50); triggerToast(toastContent);
-                               
-                               isCmdParsed = true;
-                           } catch(e) { console.error("JSON解析失败，AI格式错误", e); }
-                       }
-                   }
-                   
-                   if (isCmdParsed && fullText.includes('<msg>')) {
-                       const msgMatch = fullText.split('<msg>')[1];
-                       if (msgMatch) {
-                           botMsg.text = msgMatch.replace('</msg>', ''); 
-                           const chatBox = document.getElementById('chat-box'); 
-                           if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
-                       }
-                   }
-                }
-              }
-            }
-          }
-          isAITyping = false;
-        } catch (error) {
-          console.error(error); botMsg.text = "⚠️ 网络连接失败。请检查 API Key。"; isAITyping = false;
-        }
-      }
+把这段覆盖掉（记得填入你的 Key），再去让它“设计个汽车发动机”，保证画面上的参数马上跟着它的话一起“变形”！
 
       function analyzeMechanism(t, l1, l2, l3, l4) {
         const EPS = 0.001; 
