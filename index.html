@@ -410,27 +410,26 @@
         isAITyping = true; processAIResponse(userQ, botMsg);
       }
     
-  // 🚀 DeepSeek 驱动版流式架构 (带有物理引擎自动纠偏)
+  // 🚀 DeepSeek 驱动版流式架构 (已修复机构切换 Bug + 物理纠偏)
       async function processAIResponse(q, botMsg) {
         // ⚠️ 在这里填入你的 DeepSeek API Key
         const apiKey = "sk-89dff814b3124398b471fa8c0790e36d"; 
         
-        // 🛑 [修改点 1：使用 DeepSeek 官方接口地址]
         const apiUrl = "https://api.deepseek.com/chat/completions"; 
-        // 🛑 [修改点 2：使用 DeepSeek V3 核心模型]
         const modelName = "deepseek-chat"; 
 
         const currentType = type.value; const currentRpm = rpm.value;
         const cL1 = params.l1.value; const cL2 = params.l2.value; const cL3 = params.l3.value; const cL4 = params.l4.value;
 
-        // 提示词保持原有的强力约束
+        // 🛑 [核心修复：重写提示词，解开类型锁死，明确映射关系]
         const systemPrompt = `你是一个顶级机械动力学AI专家。
-【当前状态】拓扑: ${currentType} | 转速: ${currentRpm}RPM | L1: ${cL1} | L2: ${cL2} | L3: ${cL3} | L4: ${cL4}
-【强制物理规则】
-1. 若为滑块机构(slider-crank)，连杆L2必须大于2倍的曲柄L1！
-2. 绝对不能使用 markdown 代码块包裹！直接输出 <cmd> 标签！
-【输出格式】必须严格符合以下两行：
-<cmd>{"command": "play", "type": "${currentType}", "rpm": 30, "l1": 80, "l2": 180, "l3": 140, "l4": 220}</cmd>
+【当前画板】拓扑: ${currentType} | 转速: ${currentRpm}RPM | L1: ${cL1} | L2: ${cL2} | L3: ${cL3} | L4: ${cL4}
+【强制规则】
+1. 智能切换机构：如果用户提到“活塞/内燃机/冲程”必须将type改为"slider-crank"；提到“雨刮器/双摇杆”改为"double-rocker"；提到“刨床/急回”改为"quick-return"；提到“平行”改为"parallelogram"！并且要为新机构分配合理的初始杆长！
+2. 物理防断链：若为 slider-crank(滑块)，连杆L2必须大于2倍的曲柄L1！
+3. 绝对不能使用 markdown 代码块包裹！直接输出 <cmd> 标签！
+【输出格式】必须严格符合以下两行(type必须填合法的英文代号)：
+<cmd>{"command": "play", "type": "slider-crank", "rpm": 30, "l1": 60, "l2": 240, "l3": 140, "l4": 220}</cmd>
 <msg>用20字极简工程师口吻汇报</msg>`;
 
         const validHistory = chatHistory.value.slice(0, -1).filter(msg => msg.text && msg.role).slice(-4).map(msg => ({ role: msg.role === 'bot' ? 'assistant' : 'user', content: msg.text }));
@@ -439,16 +438,8 @@
         try {
           const response = await fetch(apiUrl, { 
               method: 'POST', 
-              headers: { 
-                  'Content-Type': 'application/json', 
-                  'Authorization': `Bearer ${apiKey}` 
-              }, 
-              body: JSON.stringify({ 
-                  model: modelName, 
-                  messages: messagesPayload, 
-                  temperature: 0.1, // 极低的温度，保证 DeepSeek 输出格式严格
-                  stream: true 
-              }) 
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` }, 
+              body: JSON.stringify({ model: modelName, messages: messagesPayload, temperature: 0.1, stream: true }) 
           });
           
           if (!response.ok) throw new Error(`API 请求失败: ${response.status}`);
@@ -466,12 +457,10 @@
                 if (data.choices[0].delta.content) {
                    fullText += data.choices[0].delta.content;
                    
-                   // 拦截器：提取指令并瞬间重组画板
                    if (!isCmdParsed && fullText.includes('</cmd>')) {
                        const cmdMatch = fullText.match(/<cmd>([\s\S]*?)<\/cmd>/);
                        if (cmdMatch) {
                            try {
-                               // 剥离 Markdown 代码块干扰
                                let jsonStr = cmdMatch[1].replace(/```json/gi, '').replace(/```/gi, '').trim();
                                const parsedData = JSON.parse(jsonStr);
                                
@@ -480,13 +469,12 @@
                                else if (parsedData.command === 'play') { isRunning.value = true; toastContent = '▶️ 系统已启动'; }
                                else if (parsedData.command === 'export') { exportSVG(); toastContent = '📐 正在出图'; }
 
-                               // 类型白名单过滤
+                               // 类型白名单过滤与切换
                                const validTypes = ['crank-rocker', 'double-rocker', 'slider-crank', 'offset-slider', 'quick-return', 'crank-swing-guide', 'parallelogram'];
                                if (validTypes.includes(parsedData.type)) type.value = parsedData.type;
                                else if (String(parsedData.type).includes('滑块') || String(parsedData.type).includes('活塞')) type.value = 'slider-crank';
                                else type.value = currentType; 
 
-                               // 绝对安全的数字转换器（防 NaN 崩溃）
                                const safeParse = (val, fallback, min, max) => {
                                    let n = parseFloat(val);
                                    if (isNaN(n)) n = parseFloat(fallback);
@@ -521,7 +509,6 @@
                        }
                    }
                    
-                   // 提取人类语言并流式显示
                    if (isCmdParsed && fullText.includes('<msg>')) {
                        const msgMatch = fullText.split('<msg>')[1];
                        if (msgMatch) {
@@ -536,7 +523,7 @@
           }
           isAITyping = false;
         } catch (error) {
-          console.error(error); botMsg.text = "⚠️ 网络连接失败。请检查 DeepSeek API Key。"; isAITyping = false;
+          console.error(error); botMsg.text = "⚠️ 网络连接失败。请检查 API Key。"; isAITyping = false;
         }
       }
 
