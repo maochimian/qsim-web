@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>灵阙动力 QSim V1.0 | 极简流体智能版</title>
+
+  <div id="qsim-error-log" style="display:none; position:fixed; z-index:99999; top:0; left:0; width:100%; background:#ef4444; color:white; padding:12px; font-family:monospace; font-size:13px; font-weight:bold; box-shadow:0 4px 12px rgba(0,0,0,0.5);"></div>
+  <script>
+    window.addEventListener('error', function(e) {
+      var log = document.getElementById('qsim-error-log');
+      log.style.display = 'block';
+      log.innerHTML += '🚨 致命崩溃拦截: ' + e.message + ' (在第 ' + e.lineno + ' 行)<br>👉 请将此行红字截图发给开发人员！<br>';
+    });
+  </script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.prod.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"Inter"', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+      }}}
+    }
+  </script>
+
+  <style>
+    body { margin: 0; background-color: #0c1117; color: #e5e7eb; height: 100vh; overflow: hidden; position: relative; touch-action: none; }
+    .glow-container { position: absolute; inset: 0; overflow: hidden; z-index: 0; background: #0c1117; }
+    .glow-orb { position: absolute; border-radius: 50%; filter: blur(120px); mix-blend-mode: screen; opacity: 0.45; pointer-events: none; }
+    .glow-1 { width: 55vw; height: 55vw; background: #3b5b7e; top: -15%; left: -15%; animation: blob1 8s infinite alternate cubic-bezier(0.4, 0, 0.2, 1); } 
+    .glow-2 { width: 50vw; height: 50vw; background: #645373; bottom: -15%; right: -15%; animation: blob2 10s infinite alternate-reverse cubic-bezier(0.4, 0, 0.2, 1); } 
+    .glow-3 { width: 60vw; height: 60vw; background: #3d6b61; top: 20%; left: 20%; animation: blob3 12s infinite alternate cubic-bezier(0.4, 0, 0.2, 1); } 
+    
+    @keyframes blob1 { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(15vw, 15vh) scale(1.1); } }
+    @keyframes blob2 { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(-15vw, -20vh) scale(1.15); } }
+    @keyframes blob3 { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(20vw, -10vh) scale(0.9); } }
+
+    .pro-glass { background: rgba(20, 20, 24, 0.45); backdrop-filter: blur(30px) saturate(140%); -webkit-backdrop-filter: blur(30px) saturate(140%); border: 1px solid rgba(255, 255, 255, 0.05); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05); border-radius: 1.5rem; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .pro-glass:hover { background: rgba(26, 26, 32, 0.55); border-color: rgba(255, 255, 255, 0.1); transform: translateY(-2px); box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    
+    input[type=range] { -webkit-appearance: none; background: transparent; margin: 0; width: 100%; height: 4px; outline: none; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #ffffff; border: 2px solid #3b82f6; box-shadow: 0 2px 8px rgba(0,0,0,0.6), inset 0 1px 2px rgba(255,255,255,0.9); cursor: grab; margin-top: -7px; transition: transform 0.1s; }
+    input[type=range]:active::-webkit-slider-thumb { transform: scale(1.15); cursor: grabbing; }
+    input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: transparent; border: none; }
+    .heatmap-track { width: 100%; height: 4px; border-radius: 2px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.5); position: relative; display: flex; align-items: center; transition: background 0.15s ease-out; }
+    .canvas-layer { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+    select option { background: #1a1b20; color: #fff; }
+    
+    .fade-enter-active, .fade-leave-active { transition: opacity 0.4s ease, transform 0.4s ease; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; transform: scale(0.98) translateY(10px); }
+    
+    .toast-enter-active, .toast-leave-active { transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, -30px) scale(0.9); }
+    
+    .thinking-text { animation: pulse 1.5s infinite; color: #94a3b8; font-style: italic; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  </style>
+</head>
+<body>
+
+<div class="glow-container"><div class="glow-orb glow-1"></div><div class="glow-orb glow-2"></div><div class="glow-orb glow-3"></div></div>
+
+<div id="app" class="relative z-10 flex h-screen w-full p-5 gap-5 overflow-hidden min-w-[1080px] min-h-[680px]">
+
+  <transition name="fade">
+    <div v-if="showTutorial" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div class="bg-[#111115]/90 border border-white/10 shadow-[0_30px_80px_rgba(0,0,0,0.8)] rounded-3xl w-[560px] p-8 backdrop-blur-2xl flex flex-col relative overflow-hidden">
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-full h-32 bg-blue-500/10 blur-[50px] pointer-events-none"></div>
+        <h2 class="text-3xl font-bold text-white tracking-tight mb-2">欢迎使用 QSim 1.0</h2>
+        <p class="text-sm text-gray-400 mb-8 font-medium">大模型驱动的轻量级云原生工业仿真平台</p>
+        
+        <div class="space-y-6 flex-1">
+          <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0 text-xl"><span>🖱️</span></div>
+            <div>
+              <h3 class="text-white font-bold text-sm mb-1">交互式参数热力图</h3>
+              <p class="text-xs text-gray-400 leading-relaxed">拖动左侧滑块或直接在画板上拖拽机械节点，红色区域代表死点或断链，绿色代表安全优良的传动区间。</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center shrink-0 text-xl"><span>🤖</span></div>
+            <div>
+              <h3 class="text-white font-bold text-sm mb-1">AI Agent 智能副驾</h3>
+              <p class="text-xs text-gray-400 leading-relaxed">点击右下角按钮呼出 AI。您可以通过自然语言让它为您设计机构、微调参数、排查故障甚至控制软件导出图纸。</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-4">
+            <div class="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 text-xl"><span>📐</span></div>
+            <div>
+              <h3 class="text-white font-bold text-sm mb-1">一键数字化制造</h3>
+              <p class="text-xs text-gray-400 leading-relaxed">点击画板上方的“导出工程数据”，可直接生成符合工业标准的 SVG 矢量文件和 CSV 运动学报表。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-8 pt-6 border-t border-white/5 flex items-center justify-end">
+          <button @click="closeTutorial" class="bg-white text-black hover:bg-gray-200 px-6 py-2.5 rounded-full text-sm font-bold shadow-[0_0_20px_rgba(255,255,255,0.2)] transition-all hover:scale-105 active:scale-95">
+            开始体验
+          </button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <aside class="w-[340px] flex flex-col gap-4 overflow-y-auto scrollbar-hide pb-6 pointer-events-auto shrink-0 pr-1">
+
+    <div class="px-2 pt-2 shrink-0 flex justify-between items-start">
+      <div>
+        <h1 class="text-3xl font-black tracking-tight text-white drop-shadow-md">灵阙动力 <span class="font-light text-blue-400">QSim</span></h1>
+        <p class="text-[10px] font-bold text-blue-400 tracking-widest uppercase mt-1 opacity-80">Version 1.0 Release</p>
+      </div>
+      
+      <div class="relative" @mouseleave="showLibrary = false">
+        <button @mouseenter="showLibrary = true" class="bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300 border border-indigo-500/30 px-3 py-2 rounded-xl text-[10px] font-bold tracking-widest uppercase transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(99,102,241,0.2)]">
+          📚 经典案例
+        </button>
+        <transition name="fade">
+          <div v-if="showLibrary" class="absolute top-full right-0 pt-2 w-48 z-50">
+            <div class="bg-[#1a1b20] border border-white/10 rounded-xl shadow-2xl py-2 backdrop-blur-xl">
+              <span class="text-[9px] text-gray-500 font-bold px-4 py-1 block uppercase tracking-widest">云端机构模板库</span>
+              <button @click="loadCase('wiper')" class="w-full text-left px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors">🚌 汽车雨刮器 (双摇杆)</button>
+              <button @click="loadCase('engine')" class="w-full text-left px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors">🚂 蒸汽机核心 (曲柄滑块)</button>
+              <button @click="loadCase('shaper')" class="w-full text-left px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors">⚙️ 牛头刨床 (急回导杆)</button>
+            </div>
+          </div>
+        </transition>
+      </div>
+    </div>
+    
+    <div class="pro-glass p-6 mt-2 shrink-0">
+      <div class="flex justify-between items-center mb-4">
+        <span class="text-[11px] font-bold text-gray-400 tracking-wider uppercase">机构拓扑类型</span>
+        <button @click="autoFit" class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-md text-[10px] font-bold tracking-widest uppercase transition-colors">自适应视野</button>
+      </div>
+      <select v-model="type" @change="handleTypeChange" class="w-full bg-black/40 border border-white/10 text-gray-200 text-sm rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-colors cursor-pointer font-medium backdrop-blur-md">
+        <option value="crank-rocker">曲柄摇杆机构 (Crank-Rocker)</option>
+        <option value="double-rocker">双摇杆机构 (Double-Rocker)</option>
+        <option value="slider-crank">曲柄滑块机构 (Slider-Crank)</option>
+        <option value="offset-slider">偏置曲柄滑块 (Offset-Slider)</option>
+        <option value="quick-return">摆动导杆急回 (Quick-Return)</option>
+        <option value="crank-swing-guide">曲柄导杆机构 (Swing-Guide)</option>
+        <option value="parallelogram">平行四边形 (Parallelogram)</option>
+      </select>
+    </div>
+    
+    <div class="pro-glass p-6 relative overflow-hidden shrink-0">
+      <div class="absolute top-0 right-0 bg-emerald-500/20 px-3 py-1 rounded-bl-xl border-l border-b border-emerald-500/30">
+        <span class="text-[9px] font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1">
+          <div class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div> 引擎在线
+        </span>
+      </div>
+      <div class="flex justify-between items-center mb-5 mt-1">
+        <span class="text-[11px] font-bold text-gray-400 tracking-wider uppercase">参数空间实时寻优</span>
+      </div>
+      
+      <div class="space-y-6">
+        <div v-for="(val, key) in params" :key="key">
+          <div class="flex justify-between mb-3">
+            <span class="text-[13px] font-medium text-gray-300 flex items-center gap-2">{{ labels[key] }}</span>
+            <span class="text-sm font-mono font-bold transition-colors" :class="activeDrag === key ? 'text-blue-400' : 'text-gray-100'">{{ Math.round(val.value) }}</span>
+          </div>
+          <div class="heatmap-track" :style="{ background: heatmaps[key] }">
+            <input type="range" v-model.number="val.value" :min="val.min" :max="val.max" @input="handleParamInput(key)" class="absolute inset-0 z-10" :disabled="isParamDisabled(key)">
+          </div>
+          <div class="flex justify-between mt-1 px-1 opacity-40">
+            <span class="text-[9px] font-mono">{{ val.min }}</span><span class="text-[9px] font-mono">{{ val.max }}</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="flex items-center justify-between gap-2 mt-6 pt-4 border-t border-white/5">
+        <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-sm bg-red-500"></div><span class="text-[9px] text-gray-400">断链/报错</span></div>
+        <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-sm bg-amber-500"></div><span class="text-[9px] text-gray-400">死点/传动角 &lt; 40°</span></div>
+        <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-sm bg-emerald-500"></div><span class="text-[9px] text-gray-400">优良设计</span></div>
+      </div>
+    </div>
+    
+    <div class="pro-glass p-6 shrink-0 mb-2">
+      <div class="w-full mb-6">
+        <div class="flex justify-between mb-2">
+          <span class="text-[13px] font-medium text-gray-300">电机主频 (RPM)</span>
+          <span class="text-sm font-mono font-bold text-blue-400">{{ rpm }} RPM</span>
+        </div>
+        <div class="heatmap-track" style="background: rgba(255,255,255,0.1)">
+          <input type="range" v-model.number="rpm" min="-240" max="240" class="absolute inset-0 z-10">
+        </div>
+      </div>
+      <div class="flex gap-3">
+        <button @click="resetSimulation" class="flex-1 bg-white/5 hover:bg-white/10 py-3.5 rounded-xl text-xs font-bold text-gray-300 transition-colors border border-white/5 hover:-translate-y-0.5">重置数据</button>
+        <button @click="isRunning = !isRunning" class="flex-[2] bg-blue-600 hover:bg-blue-500 text-white py-3.5 rounded-xl text-xs font-bold transition-all shadow-[0_0_15px_rgba(59,130,246,0.4)] hover:-translate-y-0.5 active:translate-y-0 active:scale-95">
+          {{ isRunning ? '⏸ 暂停动力系统' : '▶ 启动动力系统' }}
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="flex-1 flex flex-col gap-5 min-w-[700px] h-full relative">
+
+    <div class="flex-1 pro-glass relative overflow-hidden flex flex-col min-h-[300px] border-[1.5px] border-white/10" ref="canvasContainer">
+      <div class="absolute inset-0 opacity-[0.05] pointer-events-none" 
+           :style="{ backgroundImage: 'linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)', backgroundSize: `${50 * currentScale}px ${50 * currentScale}px`, backgroundPosition: `${baseCx + panX}px ${baseCy + panY}px` }">
+      </div>
+    
+      <div class="absolute top-0 left-0 w-full bg-black/40 border-b border-white/5 px-5 py-3 flex justify-between items-center z-20 backdrop-blur-md">
+        <div class="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-full border border-white/5">
+          <div :class="[isRunning ? (isError ? 'bg-amber-500 shadow-[0_0_8px_#f59e0b]' : 'bg-green-500 shadow-[0_0_8px_#10b981]') : 'bg-gray-500', isError && !isRunning ? '!bg-red-500 !shadow-[0_0_8px_#ef4444]' : '']" class="w-2 h-2 rounded-full"></div>
+          <span class="text-[10px] font-bold text-gray-300 uppercase tracking-widest">
+            {{ isError ? (isRunning ? '极位碰壁回弹/悬空转动' : '机构断链 / Broken Link') : (isRunning ? 'QSim Solver Active' : 'System Paused') }}
+          </span>
+        </div>
+        
+        <div class="relative" @mouseleave="showExport = false">
+          <button @mouseenter="showExport = true" class="flex items-center gap-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/40 px-4 py-1.5 rounded-full text-[11px] font-bold tracking-widest transition-colors">
+            📦 导出工程数据
+          </button>
+          <transition name="fade">
+            <div v-if="showExport" class="absolute top-full right-0 pt-2 w-56 z-50">
+              <div class="bg-[#1a1b20] border border-white/10 rounded-xl shadow-2xl py-2 backdrop-blur-xl">
+                <button @click="exportCSV" class="w-full text-left px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center justify-between"><span>📊 CSV 运动学报表</span><span class="text-[9px] bg-blue-500/20 text-blue-400 px-1 rounded">分析</span></button>
+                <button @click="exportJSON" class="w-full text-left px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center justify-between"><span>💾 JSON 项目存档</span><span class="text-[9px] bg-emerald-500/20 text-emerald-400 px-1 rounded">保存</span></button>
+                <div class="h-px bg-white/5 my-1 mx-2"></div>
+                <button @click="exportSVG" class="w-full text-left px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center justify-between"><span>📐 SVG 矢量图纸</span><span class="text-[9px] bg-purple-500/20 text-purple-400 px-1 rounded">CAD</span></button>
+                <button @click="exportPNG" class="w-full text-left px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white/10 hover:text-white transition-colors flex items-center justify-between"><span>📸 PNG 高清截图</span><span class="text-[9px] bg-pink-500/20 text-pink-400 px-1 rounded">报告</span></button>
+              </div>
+            </div>
+          </transition>
+        </div>
+      </div>
+    
+      <transition name="toast">
+        <div v-if="showToast" class="absolute top-16 left-1/2 transform -translate-x-1/2 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 px-6 py-2.5 rounded-full backdrop-blur-md flex items-center gap-2 z-50 shadow-[0_0_30px_rgba(16,185,129,0.2)] pointer-events-none">
+          <span class="text-xs font-bold tracking-wider">{{ toastMessage }}</span>
+        </div>
+      </transition>
+    
+      <canvas ref="traceCanvas" class="canvas-layer opacity-60 pointer-events-none mt-12"></canvas>
+      <canvas ref="mainCanvas" class="canvas-layer mt-12" :style="{ cursor: cursorStyle }" 
+              @mousedown="handleMouseDown" @mousemove="handleMouseMove" @mouseup="handleMouseUp" @mouseleave="handleMouseUp" 
+              @touchstart="handleMouseDown" @touchmove.prevent="handleMouseMove" @touchend="handleMouseUp" @touchcancel="handleMouseUp"
+              @wheel.prevent="handleWheel"></canvas>
+      
+      <button @click="toggleAI" class="absolute bottom-6 right-6 bg-white hover:bg-gray-200 text-black rounded-full p-4 shadow-[0_0_30px_rgba(255,255,255,0.3)] transition-all hover:scale-105 z-30 group">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 group-hover:rotate-12 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+        </svg>
+      </button>
+    </div>
+    
+    <div class="h-[220px] shrink-0 flex gap-5">
+      <div class="w-48 shrink-0 flex flex-col gap-4">
+        <div class="flex-1 pro-glass p-5 flex flex-col justify-center relative">
+          <span class="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">传动角 γ</span>
+          <span class="text-3xl font-mono font-black" :class="checkGammaLow() ? 'text-amber-500 drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'text-gray-100'">{{ isError && !isRunning ? '--' : formatVal(displayGamma) }}°</span>
+        </div>
+        <div class="flex-1 pro-glass p-5 flex flex-col justify-center relative">
+          <span class="text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-1">
+            {{ isSliderMode() ? '滑块线速度 (Velocity)' : '瞬时角速度 (Angular Vel)' }}
+          </span>
+          <div class="flex items-baseline gap-1">
+            <span class="text-3xl font-mono font-black text-gray-100 drop-shadow-sm">{{ isError && !isRunning ? '--' : formatVal(displayOmega) }}</span>
+            <span class="text-[10px] font-semibold text-gray-500">
+                {{ isSliderMode() ? 'mm/s' : 'rad/s' }}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="flex-1 min-w-0 min-h-0 pro-glass p-5 flex flex-col relative">
+        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+            {{ isSliderMode() ? '线速度曲线 (Linear Vel)' : '角速度 ω 曲线 (Angular Vel)' }}
+        </span>
+        <div class="flex-1 relative w-full min-h-0"><canvas id="velChart"></canvas></div>
+      </div>
+      <div class="flex-1 min-w-0 min-h-0 pro-glass p-5 flex flex-col relative">
+        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
+            {{ isSliderMode() ? '线加速度曲线 (Linear Acc)' : '角加速度 α 曲线 (Angular Acc)' }}
+        </span>
+        <div class="flex-1 relative w-full min-h-0"><canvas id="accChart"></canvas></div>
+      </div>
+    </div>
+  </main>
+  
+  <transition name="fade">
+    <div v-show="showAI" :style="{ left: chatX + 'px', top: chatY + 'px' }" class="fixed w-[360px] h-[480px] bg-[#1a1b22]/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-[0_30px_60px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden z-50 transition-none">
+      
+      <div @mousedown="startDragChat" class="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border-b border-white/5 px-4 py-3 flex justify-between items-center cursor-grab active:cursor-grabbing select-none">
+        <div class="flex items-center gap-2 pointer-events-none">
+          <div class="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+          <span class="text-xs font-bold text-blue-100">Q-Bot (Expert AI)</span>
+        </div>
+        <button @click="showAI = false" class="text-gray-400 hover:text-white cursor-pointer z-10">&times;</button>
+      </div>
+      
+      <div class="flex-1 p-4 overflow-y-auto flex flex-col gap-3 scrollbar-hide" id="chat-box">
+        <div v-for="(msg, i) in chatHistory" :key="i" :class="['max-w-[85%] rounded-xl px-4 py-2.5 text-[13px] leading-relaxed shadow-sm', msg.role === 'bot' ? 'bg-white/5 text-gray-200 self-start border border-white/5' : 'bg-blue-600 text-white self-end']">
+          <span v-if="msg.isThinking && !msg.text" class="thinking-text">🧠 正在运算中...</span>
+          <span v-else>{{ msg.text }}</span>
+        </div>
+      </div>
+
+      <div class="p-3 bg-black/40 border-t border-white/5">
+        <form @submit.prevent="sendAIMessage" class="flex gap-2">
+          <input type="text" v-model="aiInput" placeholder="描述极致工程需求..." class="flex-1 bg-[#0b0c10] border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-blue-500 transition-colors">
+          <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors">执行</button>
+        </form>
+        <div class="flex gap-2 mt-2">
+          <button @click="quickAsk('要求冲程设定为100mm')" class="text-[10px] bg-white/5 hover:bg-white/10 px-2 py-1 rounded text-gray-400 transition-colors">精准冲程</button>
+          <button @click="quickAsk('传动角太小，优化顺滑度')" class="text-[10px] bg-white/5 hover:bg-white/10 px-2 py-1 rounded text-gray-400 transition-colors">优化传动角</button>
+          <button @click="quickAsk('停下来，导出图纸')" class="text-[10px] bg-white/5 hover:bg-white/10 px-2 py-1 rounded text-gray-400 transition-colors">一键出图</button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+</div>
+
+<script>
+  const { createApp, ref, reactive, onMounted, onUnmounted, computed, nextTick } = Vue;
+
+  createApp({
+    setup() {
+      const type = ref('crank-rocker'); const isRunning = ref(true); const isError = ref(false); const rpm = ref(30); const showExport = ref(false);
+      const showLibrary = ref(false); 
+      const showToast = ref(false); const toastMessage = ref('');
+      const showTutorial = ref(false);
+
+      const params = reactive({ l1: { value: 80, min: 20, max: 220 }, l2: { value: 180, min: 40, max: 360 }, l3: { value: 140, min: 0, max: 300 }, l4: { value: 220, min: 60, max: 420 } });
+      const labels = { l1: '输入曲柄 L1', l2: '连杆 L2', l3: '摇杆/偏置 L3', l4: '机架固定 L4' };
+      const mColors = { crank: { dark: '#7f1d1d', main: '#ef4444', light: '#fca5a5' }, coupler: { dark: '#1e3a8a', main: '#3b82f6', light: '#93c5fd' }, rocker: { dark: '#064e3b', main: '#10b981', light: '#6ee7b7' }, frame: { dark: '#374151', main: '#9ca3af', light: '#f3f4f6' } };
+      const heatmaps = reactive({ l1: '', l2: '', l3: '', l4: '' });
+      
+      const defaultConfigs = {
+        'crank-rocker': { rpm: 30, l1: 80, l2: 180, l3: 140, l4: 220 },
+        'double-rocker': { rpm: 15, l1: 140, l2: 80, l3: 160, l4: 200 }, 
+        'slider-crank': { rpm: 45, l1: 60, l2: 240, l3: 140, l4: 220 },
+        'offset-slider': { rpm: 35, l1: 60, l2: 240, l3: 180, l4: 200 },
+        'quick-return': { rpm: 20, l1: 60, l2: 180, l3: 140, l4: 120 }, 
+        'crank-swing-guide': { rpm: 25, l1: 60, l2: 180, l3: 140, l4: 120 },
+        'parallelogram': { rpm: 30, l1: 120, l2: 200, l3: 120, l4: 200 }
+      };
+
+      function closeTutorial() { showTutorial.value = false; }
+      function checkGammaLow() { return displayGamma.value < 40; }
+      function isSliderMode() { return type.value === 'slider-crank' || type.value === 'offset-slider'; }
+
+      function triggerToast(msg) {
+        toastMessage.value = msg; showToast.value = true; setTimeout(() => { showToast.value = false; }, 3000);
+      }
+    
+      function loadCase(caseId) {
+        if(caseId === 'wiper') type.value = 'double-rocker'; 
+        else if (caseId === 'engine') type.value = 'slider-crank'; 
+        else if (caseId === 'shaper') type.value = 'quick-return'; 
+        handleTypeChange();
+      }
+    
+      function handleTypeChange() {
+        const config = defaultConfigs[type.value];
+        if (config) {
+          rpm.value = config.rpm; params.l1.value = config.l1; params.l2.value = config.l2; params.l3.value = config.l3; params.l4.value = config.l4;
+        } else rpm.value = 30; 
+        
+        if (type.value === 'parallelogram') syncParallelogram();
+        resetSimulation(); setTimeout(() => { autoFit(); }, 50); 
+      }
+    
+      const showAI = ref(false);
+      const chatX = ref(0); const chatY = ref(0);
+      let isDraggingChat = false; let chatDragOffsetX = 0; let chatDragOffsetY = 0; let hasOpenedAI = false;
+
+      function toggleAI() { 
+        showAI.value = !showAI.value; 
+        if(showAI.value && !hasOpenedAI) { chatX.value = window.innerWidth - 400; chatY.value = window.innerHeight - 520; hasOpenedAI = true; }
+      }
+
+      function startDragChat(e) {
+        isDraggingChat = true; chatDragOffsetX = e.clientX - chatX.value; chatDragOffsetY = e.clientY - chatY.value;
+        window.addEventListener('mousemove', dragChat); window.addEventListener('mouseup', stopDragChat);
+      }
+      function dragChat(e) {
+        if (!isDraggingChat) return;
+        chatX.value = Math.max(0, Math.min(window.innerWidth - 360, e.clientX - chatDragOffsetX));
+        chatY.value = Math.max(0, Math.min(window.innerHeight - 50, e.clientY - chatDragOffsetY));
+      }
+      function stopDragChat() {
+        isDraggingChat = false; window.removeEventListener('mousemove', dragChat); window.removeEventListener('mouseup', stopDragChat);
+      }
+
+      const aiInput = ref('');
+      const chatHistory = ref([{ role: 'bot', text: '您好！我是 QSim 的专属专家级智能体。我已经接入了物理反演公式，能够为您进行【精准目标设计】与【传动角智能寻优】。', isThinking: false }]);
+      let isAITyping = false;
+    
+      function quickAsk(q) { aiInput.value = q; sendAIMessage(); }
+    
+      async function sendAIMessage() {
+        if (!aiInput.value.trim() || isAITyping) return;
+        const userQ = aiInput.value.trim(); chatHistory.value.push({ role: 'user', text: userQ }); aiInput.value = '';
+        
+        await nextTick(); const chatBox = document.getElementById('chat-box'); if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+    
+        // 初始化一个带有空文本的 bot 消息，用于接收流式数据
+        const botMsg = reactive({ role: 'bot', text: '', isThinking: true });
+        chatHistory.value.push(botMsg);
+        
+        await nextTick(); if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+        isAITyping = true; processAIResponse(userQ, botMsg);
+      }
+    
+      // 🚀 终极版流式架构 (Streaming) 
+      async function processAIResponse(q, botMsg) {
+        // ⚠️ 在这里填入你的智谱 API Key
+        const apiKey = "7110c715723845d5a78ce22af70ad93d.PvegS0946vuEaPeM"; 
+        
+        const apiUrl = "https://open.bigmodel.cn/api/paas/v4/chat/completions"; const modelName = "glm-4-flash"; 
+
+        const currentType = type.value; const currentRpm = rpm.value;
+        const cL1 = params.l1.value; const cL2 = params.l2.value; const cL3 = params.l3.value; const cL4 = params.l4.value;
+        const cIsRunning = isRunning.value ? "正在运行中" : "已暂停";
+
+        const systemPrompt = `你是一个顶级的机械动力学AI专家。
+【画板状态】拓扑: ${currentType} | 转速: ${currentRpm}RPM | L1: ${cL1} | L2: ${cL2} | L3: ${cL3} | L4: ${cL4}
+【强制规则】
+1. 彻底重建：提到活塞/内燃机->slider-crank；雨刮器->double-rocker。必须重置所有杆长为合理比例！
+2. 冲程：滑块冲程=2*L1。 
+3. 优化传动角，防死点。
+【输出格式】严格按以下两行输出，不要输出纯JSON，不要多余字符：
+<cmd>{"command": "play/pause/reset/export/none", "type": "对应机构名称", "rpm":数字, "l1":数字, "l2":数字, "l3":数字, "l4":数字}</cmd>
+<msg>用极简工程师口吻向用户汇报结果</msg>`;
+
+        const validHistory = chatHistory.value.slice(0, -1).filter(msg => msg.text && msg.role).slice(-4).map(msg => ({ role: msg.role === 'bot' ? 'assistant' : 'user', content: msg.text }));
+        const messagesPayload = [ { role: "system", content: systemPrompt }, ...validHistory, { role: "user", content: q } ];
+
+        try {
+          const response = await fetch(apiUrl, { 
+              method: 'POST', 
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` }, 
+              body: JSON.stringify({ model: modelName, messages: messagesPayload, temperature: 0.1, stream: true }) 
+          });
+          
+          if (!response.ok) throw new Error(`API 请求失败`);
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let fullText = "";
+          let isCmdParsed = false;
+          botMsg.isThinking = false; // 隐藏“思考中”状态
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                const data = JSON.parse(line.slice(6));
+                if (data.choices[0].delta.content) {
+                   fullText += data.choices[0].delta.content;
+                   
+                   // 拦截器 1：提取指令并瞬间重组画板
+                   if (!isCmdParsed && fullText.includes('</cmd>')) {
+                       const cmdMatch = fullText.match(/<cmd>([\s\S]*?)<\/cmd>/);
+                       if (cmdMatch) {
+                           try {
+                               const parsedData = JSON.parse(cmdMatch[1]);
+                               let toastContent = '✅ 参数已优化';
+                               if (parsedData.command === 'pause') { isRunning.value = false; toastContent = '⏸️ 系统已暂停'; }
+                               else if (parsedData.command === 'play') { isRunning.value = true; toastContent = '▶️ 系统已启动'; }
+                               else if (parsedData.command === 'reset') resetSimulation();
+                               else if (parsedData.command === 'export') { exportSVG(); toastContent = '📐 正在出图'; }
+
+                               type.value = parsedData.type; rpm.value = parsedData.rpm; params.l1.value = parsedData.l1; params.l2.value = parsedData.l2; params.l3.value = parsedData.l3; params.l4.value = parsedData.l4;
+                               if (type.value === 'parallelogram') syncParallelogram();
+                               if (parsedData.command !== 'pause' && parsedData.command !== 'export') resetSimulation(); 
+                               setTimeout(() => { autoFit(); }, 50); triggerToast(toastContent);
+                               
+                               isCmdParsed = true;
+                           } catch(e) { console.error("JSON解析失败", e); }
+                       }
+                   }
+                   
+                   // 拦截器 2：提取人类语言并流式显示
+                   if (isCmdParsed && fullText.includes('<msg>')) {
+                       const msgMatch = fullText.split('<msg>')[1];
+                       if (msgMatch) {
+                           botMsg.text = msgMatch.replace('</msg>', ''); // 实时更新 Vue 响应式文本
+                           const chatBox = document.getElementById('chat-box'); 
+                           if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+                       }
+                   }
+                }
+              }
+            }
+          }
+          isAITyping = false;
+        } catch (error) {
+          console.error(error); botMsg.text = "⚠️ 网络连接失败。请检查 API Key。"; isAITyping = false;
+        }
+      }
+
+      function analyzeMechanism(t, l1, l2, l3, l4) {
+        const EPS = 0.001; 
+        if (t === 'crank-rocker') {
+          const lengths = [l1, l2, l3, l4].sort((a, b) => a - b);
+          if (lengths[0] + lengths[3] > lengths[1] + lengths[2] + EPS || lengths[0] !== l1) return 1; 
+          const d1 = Math.abs(l4 - l1), d2 = l4 + l1; 
+          const cosG1 = (l2*l2 + l3*l3 - d1*d1) / (2 * l2 * l3), cosG2 = (l2*l2 + l3*l3 - d2*d2) / (2 * l2 * l3);
+          if (Math.abs(cosG1) > 1 + EPS || Math.abs(cosG2) > 1 + EPS) return 0; 
+          let gMin1 = Math.acos(Math.max(-1, Math.min(1, cosG1))) * 180 / Math.PI; let gMin2 = Math.acos(Math.max(-1, Math.min(1, cosG2))) * 180 / Math.PI;
+          return Math.min(gMin1 > 90 ? 180 - gMin1 : gMin1, gMin2 > 90 ? 180 - gMin2 : gMin2) < 40 ? 2 : 3; 
+        }
+        else if (t === 'double-rocker') { const lengths = [l1, l2, l3, l4].sort((a, b) => a - b); if (lengths[3] >= lengths[0] + lengths[1] + lengths[2] - EPS) return 0; if (lengths[0] + lengths[3] <= lengths[1] + lengths[2] + EPS && lengths[0] === l1) return 1; return 3; }
+        else if (t === 'slider-crank') { if (l1 >= l2) return 1; const cosGamma = l1 / l2; if (cosGamma > 1 + EPS) return 0; return (Math.acos(Math.max(-1, Math.min(1, cosGamma))) * 180 / Math.PI) < 40 ? 2 : 3; }
+        else if (t === 'offset-slider') { const e = Math.abs((l3 - 120) * 0.35); if (l1 + e >= l2) return 1; if (l1 + l2 <= e) return 0; const cosGamma = (e + l1) / l2; if (cosGamma > 1 + EPS) return 0; return (Math.acos(Math.max(-1, Math.min(1, cosGamma))) * 180 / Math.PI) < 40 ? 2 : 3; }
+        else if (t === 'quick-return' || t === 'parallelogram') return l1 >= l4 ? 1 : 3; 
+        else if (t === 'crank-swing-guide') return l1 <= l4 ? 1 : 3; 
+        return 3;
+      }
+    
+      function generateHeatmaps() {
+        const currentVals = { l1: params.l1.value, l2: params.l2.value, l3: params.l3.value, l4: params.l4.value };
+        ['l1','l2','l3','l4'].forEach(key => {
+          if(isParamDisabled(key)) { heatmaps[key] = 'rgba(255,255,255,0.1)'; return; }
+          let colorStops = [];
+          for (let i = 0; i <= 40; i++) {
+            let testVal = params[key].min + (params[key].max - params[key].min) * (i / 40);
+            let status = analyzeMechanism(type.value, {...currentVals, [key]: testVal}.l1, {...currentVals, [key]: testVal}.l2, {...currentVals, [key]: testVal}.l3, {...currentVals, [key]: testVal}.l4);
+            colorStops.push(`${status === 3 ? '#10b981' : (status === 2 ? '#f59e0b' : '#ef4444')} ${(i/40)*100}%`);
+          }
+          heatmaps[key] = `linear-gradient(to right, ${colorStops.join(', ')})`;
+        });
+      }
+    
+      const theta = ref(0); let gamma = 0, omega = 0, alpha = 0; const displayGamma = ref(0), displayOmega = ref(0), displayAlpha = ref(0);
+      const lastOmega = ref(0), lastOutputAngle = ref(null); let tracePoints = [];         
+      const canvasContainer = ref(null), mainCanvas = ref(null), traceCanvas = ref(null);
+      let ctx, tctx, baseCx = ref(0), baseCy = ref(0), panX = ref(0), panY = ref(0), currentScale = ref(1.2);
+      let isPanning = ref(false), startPanX = 0, startPanY = 0, animationFrameId = null, lastTime = 0; 
+      const activeDrag = ref(null), hoverNode = ref(null);  let currentSolPoints = null;  
+      const cursorStyle = computed(() => activeDrag.value || isPanning.value ? 'grabbing' : hoverNode.value ? 'grab' : 'default');
+      let vChart = null, aChart = null; let chartUpdateAccumulator = 0, textUpdateAccumulator = 0; 
+    
+      function isParamDisabled(key) { 
+          if (type.value === 'parallelogram') return key === 'l2' || key === 'l3'; 
+          if (type.value === 'slider-crank' || type.value === 'quick-return' || type.value === 'crank-swing-guide') return key === 'l3'; 
+          return false;
+      }
+    
+      function getMousePos(e) { 
+        const rect = mainCanvas.value.getBoundingClientRect(); const clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX; const clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
+        return { x: ((clientX - rect.left) - baseCx.value - panX.value) / currentScale.value, y: -((clientY - rect.top) - baseCy.value - panY.value) / currentScale.value }; 
+      }
+      
+      function handleMouseMove(e) {
+        const mouse = getMousePos(e);
+        if (isPanning.value) { const clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX; const clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY; panX.value = clientX - startPanX; panY.value = clientY - startPanY; redrawTrace(); return; }
+        if (activeDrag.value) {
+          if (activeDrag.value === 'l1') params.l1.value = Math.max(params.l1.min, Math.min(params.l1.max, Math.hypot(mouse.x, mouse.y)));
+          else if (activeDrag.value === 'l4') params.l4.value = Math.max(params.l4.min, Math.min(params.l4.max, mouse.x));
+          if (type.value === 'parallelogram') syncParallelogram(); resetTrace(); generateHeatmaps(); return;
+        }
+        if (currentSolPoints && !currentSolPoints.broken) {
+          const threshold = 18 / currentScale.value; 
+          hoverNode.value = Math.hypot(mouse.x - currentSolPoints.A.x, mouse.y - currentSolPoints.A.y) < threshold ? 'A' : (Math.hypot(mouse.x - currentSolPoints.C.x, mouse.y - currentSolPoints.C.y) < threshold ? 'C' : null);
+        } else if (currentSolPoints && currentSolPoints.broken) {
+          const threshold = 18 / currentScale.value; 
+          if(Math.hypot(mouse.x - currentSolPoints.A.x, mouse.y - currentSolPoints.A.y) < threshold) hoverNode.value = 'A'; else if(Math.hypot(mouse.x - currentSolPoints.C.x, mouse.y - currentSolPoints.C.y) < threshold) hoverNode.value = 'C'; else hoverNode.value = null;
+        }
+      }
+      function handleMouseDown(e) { 
+        if (hoverNode.value === 'A') activeDrag.value = 'l1'; else if (hoverNode.value === 'C') activeDrag.value = 'l4'; 
+        else { isPanning.value = true; const clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX; const clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY; startPanX = clientX - panX.value; startPanY = clientY - panY.value; } 
+      }
+      function handleMouseUp() { activeDrag.value = null; isPanning.value = false; }
+      function handleWheel(e) {
+        const newScale = currentScale.value * (1 + -e.deltaY * 0.0015); if (newScale < 0.2 || newScale > 4.0) return;
+        const rect = mainCanvas.value.getBoundingClientRect(), ratio = newScale / currentScale.value;
+        panX.value = (e.clientX - rect.left) - baseCx.value - ((e.clientX - rect.left) - baseCx.value - panX.value) * ratio;
+        panY.value = (e.clientY - rect.top) - baseCy.value - ((e.clientY - rect.top) - baseCy.value - panY.value) * ratio;
+        currentScale.value = newScale; redrawTrace();
+      }
+      function handleParamInput() { if (type.value === 'parallelogram') syncParallelogram(); resetTrace(); generateHeatmaps(); }
+      function syncParallelogram() { params.l2.value = params.l4.value; params.l3.value = params.l1.value; }
+    
+      function solveMechanism(angle) {
+        const { l1: {value: l1}, l2: {value: l2}, l3: {value: l3}, l4: {value: l4} } = params;
+        const O = { x: 0, y: 0 }, A = { x: l1 * Math.cos(angle), y: l1 * Math.sin(angle) }, C = { x: l4, y: 0 }, t = type.value;
+        const EPS = 0.01; 
+    
+        if (t === 'crank-rocker' || t === 'double-rocker') {
+          const dx = C.x - A.x, dy = C.y - A.y, d = Math.hypot(dx, dy); 
+          if (d > l2 + l3 + EPS || d < Math.abs(l2 - l3) - EPS || d === 0) return { kind: 'fourbar', O, A, B: null, C, broken: true };
+          const a = (l2 * l2 - l3 * l3 + d * d) / (2 * d); const h2 = l2 * l2 - a * a; 
+          if (h2 < -EPS) return { kind: 'fourbar', O, A, B: null, C, broken: true };
+          const h = Math.sqrt(Math.max(0, h2)), xm = A.x + a * dx / d, ym = A.y + a * dy / d;
+          const B1 = { x: xm - dy * h / d, y: ym + dx * h / d }, B2 = { x: xm + dy * h / d, y: ym - dx * h / d }, B = (t !== 'double-rocker') ? (B1.y >= B2.y ? B1 : B2) : (B1.y < B2.y ? B1 : B2);
+          const outAngle = Math.atan2(B.y - C.y, B.x - C.x);
+          let transAngle = Math.abs((outAngle - Math.atan2(B.y - A.y, B.x - A.x)) * 180 / Math.PI); while (transAngle > 180) transAngle -= 180;
+          return { kind: 'fourbar', O, A, B, C, outAngle, outValue: outAngle, isRotational: true, transAngle: transAngle > 90 ? 180 - transAngle : transAngle, trace: B, broken: false };
+        } 
+        else if (t === 'slider-crank' || t === 'offset-slider') {
+          const offset = t === 'offset-slider' ? (l3 - 120) * 0.35 : 0, delta = l2 * l2 - Math.pow(offset - A.y, 2); 
+          if (delta < -EPS) return { kind: 'slider', O, A, B: null, C: {x:l4, y:offset}, broken: true };
+          const B = { x: A.x + Math.sqrt(Math.max(0, delta)), y: offset }, outAngle = Math.atan2(B.y - A.y, B.x - A.x);
+          return { kind: 'slider', O, A, B, C: {x:l4, y:offset}, outAngle, outValue: B.x, isRotational: false, transAngle: Math.abs(90 - Math.abs(outAngle * 180 / Math.PI)), trace: B, broken: false };
+        }
+        else if (t === 'quick-return') {
+          const slotAngle = Math.atan2(A.y - C.y, A.x - C.x);
+          if (C.x === A.x && C.y === A.y) return { kind: 'quick', O, A, B: null, C, broken: true };
+          const B = { x: C.x + Math.max(120, l2) * Math.cos(slotAngle), y: C.y + Math.max(120, l2) * Math.sin(slotAngle) };
+          return { kind: 'quick', O, A, B, C, outAngle: slotAngle, outValue: slotAngle, isRotational: true, transAngle: Math.abs(slotAngle * 180 / Math.PI), trace: B, broken: false };
+        }
+        else if (t === 'crank-swing-guide') {
+          const guideAngle = Math.atan2(A.y - C.y, A.x - C.x);
+          if (C.x === A.x && C.y === A.y) return { kind: 'guide', O, A, B: null, C, broken: true };
+          const guideLen = Math.max(l2, Math.hypot(A.x - C.x, A.y - C.y) + 60); 
+          const B = { x: C.x + Math.cos(guideAngle) * guideLen, y: C.y + Math.sin(guideAngle) * guideLen };
+          return { kind: 'guide', O, A, B, C, outAngle: guideAngle, outValue: guideAngle, isRotational: true, transAngle: 90, trace: B, broken: false };
+        }
+        else if (t === 'parallelogram') { 
+          if (l1 >= l4 - EPS) return { kind: 'parallelogram', O, A, B: null, C, broken: true };
+          return { kind: 'parallelogram', O, A, B: { x: C.x + A.x, y: C.y + A.y }, C, outAngle: angle, outValue: angle, isRotational: true, transAngle: 90, trace: { x: C.x + A.x, y: C.y + A.y }, broken: false }; 
+        }
+      }
+    
+      function calculateKinematics(currentTheta) {
+        let sol0 = solveMechanism(currentTheta); if (!sol0 || sol0.broken) return null;
+        let h = 0.05, solP = solveMechanism(currentTheta + h), solM = solveMechanism(currentTheta - h);
+        if (!solP || solP.broken || !solM || solM.broken) return { omega: 0, alpha: 0, sol: sol0 };
+
+        let isRot = sol0.isRotational; let y0 = sol0.outValue; let yp = solP.outValue; let ym = solM.outValue;
+        if (isRot) {
+            let diff = yp - y0; while(diff > Math.PI) diff -= Math.PI * 2; while(diff < -Math.PI) diff += Math.PI * 2; yp = y0 + diff;
+            diff = ym - y0; while(diff > Math.PI) diff -= Math.PI * 2; while(diff < -Math.PI) diff += Math.PI * 2; ym = y0 + diff;
+        }
+
+        let fp = (yp - ym) / (2 * h), fpp = (yp - 2 * y0 + ym) / (h * h), w_in = rpm.value * Math.PI / 30;
+        return { omega: fp * w_in, alpha: fpp * w_in * w_in, sol: sol0 };
+      }
+
+      function downloadFile(content, fileName, isUrl = false) { 
+          const link = document.createElement('a'); const targetUrl = isUrl ? content : URL.createObjectURL(new Blob([content]));
+          link.href = targetUrl; link.download = fileName; link.click(); if (!isUrl) setTimeout(() => URL.revokeObjectURL(targetUrl), 5000); showExport.value = false;  
+      }
+    
+      function exportCSV() {
+        let csv = "\uFEFFTheta(deg),Gamma(deg),Omega/Velocity,Alpha/Acceleration,Trace_X,Trace_Y\n"; 
+        for(let deg = 0; deg <= 360; deg++) { let kin = calculateKinematics(deg * Math.PI / 180); if(kin) csv += `${deg},${kin.sol.transAngle.toFixed(2)},${kin.omega.toFixed(2)},${kin.alpha.toFixed(2)},${kin.sol.trace.x.toFixed(2)},${kin.sol.trace.y.toFixed(2)}\n`; }
+        downloadFile(csv, `QSim_${type.value}_Data.csv`);
+      }
+      function exportJSON() { downloadFile(JSON.stringify({ version: 'Agent.V1.0', type: type.value, rpm: rpm.value, params: { L1: params.l1.value, L2: params.l2.value, L3: params.l3.value, L4: params.l4.value }}, null, 2), `QSim_Config.json`); }
+      function exportPNG() {
+        const expCanvas = document.createElement('canvas'); const dpr = window.devicePixelRatio || 1; expCanvas.width = mainCanvas.value.width; expCanvas.height = mainCanvas.value.height; const eCtx = expCanvas.getContext('2d');
+        eCtx.fillStyle = '#0b0c10'; eCtx.fillRect(0, 0, expCanvas.width, expCanvas.height); eCtx.strokeStyle = 'rgba(255,255,255,0.05)'; eCtx.lineWidth = 1;
+        const gridSz = 50 * currentScale.value * dpr; const oX = (baseCx.value + panX.value) * dpr; const oY = (baseCy.value + panY.value) * dpr;
+        for(let x = oX % gridSz; x < expCanvas.width; x+=gridSz) { eCtx.beginPath(); eCtx.moveTo(x,0); eCtx.lineTo(x,expCanvas.height); eCtx.stroke(); }
+        for(let y = oY % gridSz; y < expCanvas.height; y+=gridSz) { eCtx.beginPath(); eCtx.moveTo(0,y); eCtx.lineTo(expCanvas.width,y); eCtx.stroke(); }
+        eCtx.drawImage(traceCanvas.value, 0, 0); eCtx.drawImage(mainCanvas.value, 0, 0);
+        eCtx.fillStyle = 'rgba(255,255,255,0.4)'; eCtx.font = `bold ${24*dpr}px ui-monospace`; eCtx.fillText('灵阙动力 QSim Agent 1.0', 20*dpr, 40*dpr);
+        downloadFile(expCanvas.toDataURL('image/png'), `QSim_Snapshot.png`, true);
+      }
+      
+      function exportSVG() {
+        if(!currentSolPoints) { triggerToast('⚠️ 警告：当前机构断链或未运行，无法导出图纸'); return; }
+        let pathD = ""; let wasValid = false;
+        for(let deg = 0; deg <= 360; deg+=2) { let sol = solveMechanism(deg * Math.PI / 180); if(sol && !sol.broken) { pathD += `${!wasValid?'M':'L'} ${sol.trace.x.toFixed(1)} ${-sol.trace.y.toFixed(1)} `; wasValid = true; } else { wasValid = false; } }
+        if(pathD === "") return alert("无有效轨迹，无法导出工程图！");
+        const O = currentSolPoints.O, A = currentSolPoints.A, B = currentSolPoints.B || {x:0, y:0}, C = currentSolPoints.C;
+        const mx = Math.max(params.l1.value + params.l2.value, params.l4.value + params.l3.value, 400) + 100;
+        downloadFile(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-mx} ${-mx} ${mx*2} ${mx*2}" style="background-color:#1a1b20;"><line x1="${-mx}" y1="0" x2="${mx}" y2="0" stroke="#ffffff" stroke-width="1" stroke-opacity="0.1"/><line x1="0" y1="${-mx}" x2="0" y2="${mx}" stroke="#ffffff" stroke-width="1" stroke-opacity="0.1"/><path d="${pathD}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-opacity="0.8" stroke-dasharray="4 4" /><line x1="${O.x}" y1="${-O.y}" x2="${C.x}" y2="${-C.y}" stroke="#9ca3af" stroke-width="8" stroke-linecap="round"/><line x1="${O.x}" y1="${-O.y}" x2="${A.x}" y2="${-A.y}" stroke="#ef4444" stroke-width="6" stroke-linecap="round"/>${type.value !== 'slider-crank' && type.value !== 'offset-slider' ? `<line x1="${C.x}" y1="${-C.y}" x2="${B.x}" y2="${-B.y}" stroke="#10b981" stroke-width="6" stroke-linecap="round"/>` : ''}<line x1="${A.x}" y1="${-A.y}" x2="${B.x}" y2="${-B.y}" stroke="#3b82f6" stroke-width="6" stroke-linecap="round"/><circle cx="${A.x}" cy="${-A.y}" r="4" fill="#ffffff" /><circle cx="${B.x}" cy="${-B.y}" r="4" fill="#ffffff" /><circle cx="${C.x}" cy="${-C.y}" r="4" fill="#ffffff" /><circle cx="${O.x}" cy="${-O.y}" r="4" fill="#ffffff" /></svg>`.trim(), `QSim_Vector.svg`);
+      }
+    
+      function getChartOptions(color) { return { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { grid: { color: 'rgba(255,255,255,0.05)' }, border: { display: false }, ticks: { color: 'rgba(255,255,255,0.4)', font: { family: 'ui-monospace', size: 10 } } } }, elements: { point: { radius: 0 }, line: { tension: 0.4, borderWidth: 2, borderColor: color } } }; }
+      function initCharts() { vChart = new Chart(document.getElementById('velChart').getContext('2d'), { type: 'line', data: { labels: Array(120).fill(''), datasets: [{ data: Array(120).fill(0) }] }, options: getChartOptions('#3b82f6') }); aChart = new Chart(document.getElementById('accChart').getContext('2d'), { type: 'line', data: { labels: Array(120).fill(''), datasets: [{ data: Array(120).fill(0) }] }, options: getChartOptions('#8b5cf6') }); }
+      function updateChartData(w, a) { if (!vChart || !aChart) return; vChart.data.datasets[0].data.push(w); vChart.data.datasets[0].data.shift(); aChart.data.datasets[0].data.push(a); aChart.data.datasets[0].data.shift(); vChart.update('none'); aChart.update('none'); }
+      
+      function autoFit() { 
+        if (!canvasContainer.value) return; 
+        const rect = canvasContainer.value.getBoundingClientRect(), w = rect.width || 800, h = Math.max(100, rect.height || 600); 
+        const l1 = params.l1.value, l2 = params.l2.value, l3 = params.l3.value, l4 = params.l4.value; const maxReach = Math.max(l1 + l2, l4 + l2 + l3, 200); 
+        let newScale = Math.min(w / (maxReach * 2.5), h / (maxReach * 2.2)); currentScale.value = (isNaN(newScale) || newScale <= 0) ? 1.2 : newScale; 
+        baseCx.value = w * 0.35; baseCy.value = (h - 48) * 0.6; panX.value = 0; panY.value = 0; redrawTrace(); 
+      }
+      function resize() { 
+        if (!canvasContainer.value) return; const rect = canvasContainer.value.getBoundingClientRect(); if (rect.width === 0 || rect.height === 0) return; 
+        const dpr = window.devicePixelRatio || 1, safeHeight = Math.max(10, rect.height - 48);
+        [mainCanvas.value, traceCanvas.value].forEach(c => { c.width = rect.width * dpr; c.height = safeHeight * dpr; const context = c.getContext('2d'); context.setTransform(1, 0, 0, 1, 0, 0); context.scale(dpr, dpr); }); autoFit(); 
+      }
+      function worldToScreen(p) { return { x: baseCx.value + panX.value + p.x * currentScale.value, y: baseCy.value + panY.value - p.y * currentScale.value }; }
+      
+      function drawMetallicLink(a, b, colors, width, isHovered) { ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; const isHighLoad = isRunning.value && Math.abs(rpm.value) > 120; ctx.shadowColor = (isHighLoad && !isHovered) ? 'transparent' : 'rgba(0,0,0,0.6)'; ctx.shadowBlur = isHovered ? 15 : (isHighLoad ? 0 : 10); ctx.shadowOffsetY = isHighLoad ? 0 : 6; const w = isHovered ? width + 2 : width; ctx.lineWidth = w; ctx.strokeStyle = colors.dark; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.shadowColor = 'transparent'; ctx.lineWidth = w * 0.7; ctx.strokeStyle = colors.main; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.lineWidth = w * 0.2; ctx.strokeStyle = colors.light; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.restore(); }
+      function drawMetallicJoint(p, isGround, isHovered) { ctx.save(); const r = isHovered ? 9 : 7, isHighLoad = isRunning.value && Math.abs(rpm.value) > 120; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fillStyle = '#9ca3af'; ctx.shadowColor = isHighLoad ? 'transparent' : 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 4; ctx.fill(); ctx.shadowColor = 'transparent'; ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.65, 0, Math.PI * 2); ctx.fillStyle = '#1f2937'; ctx.fill(); ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.5, 0, Math.PI * 2); ctx.fillStyle = isGround ? '#3b82f6' : '#d1d5db'; ctx.fill(); ctx.beginPath(); ctx.arc(p.x - r*0.15, p.y - r*0.15, r * 0.15, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fill(); ctx.restore(); }
+    
+      function render(sol) {
+        ctx.clearRect(0, 0, mainCanvas.value.width, mainCanvas.value.height); ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, baseCy.value + panY.value); ctx.lineTo(mainCanvas.value.width, baseCy.value + panY.value); ctx.stroke();
+        if (!sol) return; 
+        
+        const O = worldToScreen(sol.O), A = worldToScreen(sol.A), C = worldToScreen(sol.C), k = sol.kind;
+        
+        if(sol.broken) {
+            drawMetallicLink(O, C, mColors.frame, 10, hoverNode.value === 'C'); drawMetallicLink(O, A, mColors.crank, 8, hoverNode.value === 'A');
+            drawMetallicJoint(O, true); drawMetallicJoint(A, false, hoverNode.value === 'A'); drawMetallicJoint(C, true, hoverNode.value === 'C');
+            if(k === 'slider') { ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 14; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(0, C.y); ctx.lineTo(mainCanvas.value.width, C.y); ctx.stroke(); ctx.restore(); }
+            return; 
+        }
+    
+        const B = worldToScreen(sol.B);
+        if(k === 'slider') { ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 14; ctx.lineCap = 'round'; ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 4; ctx.beginPath(); ctx.moveTo(0, B.y); ctx.lineTo(mainCanvas.value.width, B.y); ctx.stroke(); ctx.restore(); } else { drawMetallicLink(O, C, mColors.frame, 10, hoverNode.value === 'C'); }
+        drawMetallicLink(O, A, mColors.crank, 8, hoverNode.value === 'A'); 
+        if (k === 'fourbar' || k === 'parallelogram') { drawMetallicLink(B, C, mColors.rocker, 8); drawMetallicLink(A, B, mColors.coupler, 8); drawMetallicJoint(C, true, hoverNode.value === 'C'); } 
+        else if (k === 'slider') { drawMetallicLink(A, B, mColors.coupler, 8); ctx.save(); ctx.fillStyle = '#10b981'; ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 5; ctx.fillRect(B.x - 22, B.y - 14, 44, 28); ctx.shadowColor = 'transparent'; ctx.strokeStyle = '#6ee7b7'; ctx.lineWidth = 1.5; ctx.strokeRect(B.x - 22, B.y - 14, 44, 28); ctx.restore(); } 
+        else if (k === 'quick') { drawMetallicLink(C, B, mColors.rocker, 10); drawMetallicLink(A, B, mColors.coupler, 5); drawMetallicJoint(C, true, hoverNode.value === 'C'); } 
+        else if (k === 'guide') { drawMetallicLink(C, B, mColors.rocker, 10); ctx.save(); ctx.translate(A.x, A.y); ctx.rotate(sol.outAngle); ctx.fillStyle = '#10b981'; ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 8; ctx.fillRect(-16, -12, 32, 24); ctx.shadowColor = 'transparent'; ctx.strokeStyle = '#6ee7b7'; ctx.lineWidth = 1.5; ctx.strokeRect(-16, -12, 32, 24); ctx.restore(); drawMetallicJoint(C, true, hoverNode.value === 'C'); }
+        drawMetallicJoint(O, true); drawMetallicJoint(A, false, hoverNode.value === 'A'); if (k !== 'guide') drawMetallicJoint(B); 
+      }
+    
+      function updateTrace(p) { tracePoints.push(p); if (tracePoints.length > 200) tracePoints.shift(); if (tracePoints.length < 2) return; const last = worldToScreen(tracePoints[tracePoints.length - 2]), curr = worldToScreen(p); tctx.save(); tctx.strokeStyle = '#3b82f6'; tctx.lineWidth = 2.5; tctx.lineCap = 'round'; tctx.shadowBlur = 10; tctx.shadowColor = 'rgba(59,130,246,0.6)'; tctx.beginPath(); tctx.moveTo(last.x, last.y); tctx.lineTo(curr.x, curr.y); tctx.stroke(); tctx.restore(); }
+      function redrawTrace() { if (!tctx) return; tctx.clearRect(0, 0, traceCanvas.value.width, traceCanvas.value.height); if (tracePoints.length < 2) return; tctx.save(); tctx.strokeStyle = '#3b82f6'; tctx.lineWidth = 2.5; tctx.shadowBlur = 10; tctx.shadowColor = 'rgba(59,130,246,0.6)'; tctx.beginPath(); tctx.moveTo(worldToScreen(tracePoints[0]).x, worldToScreen(tracePoints[0]).y); for(let i=1; i<tracePoints.length; i++) { tctx.lineTo(worldToScreen(tracePoints[i]).x, worldToScreen(tracePoints[i]).y); } tctx.stroke(); tctx.restore(); }
+      
+      function resetTrace() { 
+          tracePoints = []; if (tctx) tctx.clearRect(0, 0, traceCanvas.value.width, traceCanvas.value.height); 
+          lastOutputAngle.value = null; omega = 0; alpha = 0; displayOmega.value = 0; displayAlpha.value = 0; 
+          chartUpdateAccumulator = 0; textUpdateAccumulator = 0;
+          if (vChart) { vChart.data.datasets[0].data.fill(0); vChart.update('none'); }
+          if (aChart) { aChart.data.datasets[0].data.fill(0); aChart.update('none'); }
+      }
+      function resetSimulation() { if (type.value === 'parallelogram') syncParallelogram(); theta.value = 0; resetTrace(); autoFit(); generateHeatmaps(); }
+    
+      function loop(timestamp) {
+        if (!lastTime) lastTime = timestamp; const rawDt = (timestamp - lastTime) / 1000; lastTime = timestamp; 
+        if (rawDt > 0.1 || isNaN(rawDt)) { animationFrameId = requestAnimationFrame(loop); return; }
+        const dt = rawDt; 
+        
+        if (isRunning.value) { 
+          const step = (rpm.value * Math.PI / 30) * dt; let testTheta = theta.value + step; let testSol = solveMechanism(testTheta); 
+          if (testSol && !testSol.broken) { theta.value = testTheta; isError.value = false; } else {
+            let revTheta = theta.value - step; let revSol = solveMechanism(revTheta);
+            if (revSol && !revSol.broken) { rpm.value = -rpm.value; theta.value = revTheta; isError.value = true; } else { theta.value = testTheta; isError.value = true; }
+          }
+        }
+        
+        let kin = calculateKinematics(theta.value);
+        currentSolPoints = kin ? kin.sol : solveMechanism(theta.value);
+    
+        if (kin && !isError.value) {
+          gamma = kin.sol.transAngle; omega = kin.omega; alpha = kin.alpha;
+          if (isRunning.value) {
+            chartUpdateAccumulator += dt; textUpdateAccumulator += dt;
+            if (textUpdateAccumulator > 0.08) { displayGamma.value = gamma; displayOmega.value = omega; displayAlpha.value = alpha; textUpdateAccumulator = 0; }
+            if (chartUpdateAccumulator > 0.03) { updateChartData(omega, alpha); chartUpdateAccumulator = 0; }
+            updateTrace(kin.sol.trace); 
+          } else { displayGamma.value = gamma; displayOmega.value = omega; displayAlpha.value = alpha; }
+        }
+        render(currentSolPoints); animationFrameId = requestAnimationFrame(loop);
+      }
+      
+      function formatVal(v) { return Math.abs(v) < 0.05 ? '0.0' : Number(v).toFixed(1); }
+    
+      onMounted(() => {
+        try { if (localStorage.getItem('qsim_never_show_tutorial') !== 'true') showTutorial.value = true; } catch(e) { showTutorial.value = true; }
+        ctx = mainCanvas.value.getContext('2d'); tctx = traceCanvas.value.getContext('2d'); window.addEventListener('resize', resize); 
+        setTimeout(() => { resize(); initCharts(); if (type.value === 'parallelogram') syncParallelogram(); generateHeatmaps(); animationFrameId = requestAnimationFrame(loop); }, 100);
+      });
+      onUnmounted(() => { window.removeEventListener('resize', resize); cancelAnimationFrame(animationFrameId); if (vChart) vChart.destroy(); if (aChart) aChart.destroy(); });
+    
+      return { 
+        type, isRunning, isError, rpm, params, labels, displayGamma, displayOmega, displayAlpha, heatmaps, showExport, showLibrary, showAI, aiInput, chatHistory, toggleAI, sendAIMessage, quickAsk, loadCase, handleTypeChange, exportCSV, exportJSON, exportPNG, exportSVG, resetSimulation, resetTrace, formatVal, canvasContainer, mainCanvas, traceCanvas, cursorStyle, handleMouseDown, handleMouseMove, handleMouseUp, handleWheel, activeDrag, handleParamInput, isParamDisabled, baseCx, baseCy, panX, panY, currentScale, autoFit, showToast, toastMessage,
+        showTutorial, closeTutorial, chatX, chatY, startDragChat, checkGammaLow, isSliderMode
+      };
+    }
+  }).mount('#app')
+</script>
+</body>
+</html>
