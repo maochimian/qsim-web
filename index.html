@@ -410,7 +410,7 @@
         isAITyping = true; processAIResponse(userQ, botMsg);
       }
     
-      // 🚀 终极版流式架构 (Streaming) 
+   // 🚀 终极版流式架构 (Streaming) 
       async function processAIResponse(q, botMsg) {
         // ⚠️ 在这里填入你的智谱 API Key
         const apiKey = "7110c715723845d5a78ce22af70ad93d.PvegS0946vuEaPeM"; 
@@ -419,8 +419,8 @@
 
         const currentType = type.value; const currentRpm = rpm.value;
         const cL1 = params.l1.value; const cL2 = params.l2.value; const cL3 = params.l3.value; const cL4 = params.l4.value;
-        const cIsRunning = isRunning.value ? "正在运行中" : "已暂停";
 
+        // 🛑 [修复核心 1：强化Prompt，严格限制输出枚举类型]
         const systemPrompt = `你是一个顶级的机械动力学AI专家。
 【画板状态】拓扑: ${currentType} | 转速: ${currentRpm}RPM | L1: ${cL1} | L2: ${cL2} | L3: ${cL3} | L4: ${cL4}
 【强制规则】
@@ -428,8 +428,8 @@
 2. 冲程：滑块冲程=2*L1。 
 3. 优化传动角，防死点。
 【输出格式】严格按以下两行输出，不要输出纯JSON，不要多余字符：
-<cmd>{"command": "play/pause/reset/export/none", "type": "对应机构名称", "rpm":数字, "l1":数字, "l2":数字, "l3":数字, "l4":数字}</cmd>
-<msg>用极简工程师口吻向用户汇报结果</msg>`;
+<cmd>{"command": "play/pause/reset/export/none", "type": "必须严格输出以下之一: crank-rocker, double-rocker, slider-crank, offset-slider, quick-return, crank-swing-guide, parallelogram", "rpm":数字, "l1":数字, "l2":数字, "l3":数字, "l4":数字}</cmd>
+<msg>用20字极简工程师口吻向用户汇报结果</msg>`;
 
         const validHistory = chatHistory.value.slice(0, -1).filter(msg => msg.text && msg.role).slice(-4).map(msg => ({ role: msg.role === 'bot' ? 'assistant' : 'user', content: msg.text }));
         const messagesPayload = [ { role: "system", content: systemPrompt }, ...validHistory, { role: "user", content: q } ];
@@ -474,7 +474,21 @@
                                else if (parsedData.command === 'reset') resetSimulation();
                                else if (parsedData.command === 'export') { exportSVG(); toastContent = '📐 正在出图'; }
 
-                               type.value = parsedData.type; rpm.value = parsedData.rpm; params.l1.value = parsedData.l1; params.l2.value = parsedData.l2; params.l3.value = parsedData.l3; params.l4.value = parsedData.l4;
+                               // 🛑 [修复核心 2：增加类型白名单拦截与容错映射，彻底防止机构消失]
+                               const validTypes = ['crank-rocker', 'double-rocker', 'slider-crank', 'offset-slider', 'quick-return', 'crank-swing-guide', 'parallelogram'];
+                               if (validTypes.includes(parsedData.type)) {
+                                   type.value = parsedData.type;
+                               } else {
+                                   // 极端容错：如果AI抽风输出了中文或乱码，自动翻译映射
+                                   const tStr = String(parsedData.type || '');
+                                   if (tStr.includes('滑块') || tStr.includes('活塞') || tStr.includes('内燃机')) type.value = 'slider-crank';
+                                   else if (tStr.includes('雨刮') || tStr.includes('双摇杆')) type.value = 'double-rocker';
+                                   else if (tStr.includes('急回') || tStr.includes('刨床') || tStr.includes('导杆')) type.value = 'quick-return';
+                                   else if (tStr.includes('平行')) type.value = 'parallelogram';
+                                   else type.value = currentType; // 终极兜底：保持当前机构不变，绝对不白屏
+                               }
+
+                               rpm.value = parsedData.rpm; params.l1.value = parsedData.l1; params.l2.value = parsedData.l2; params.l3.value = parsedData.l3; params.l4.value = parsedData.l4;
                                if (type.value === 'parallelogram') syncParallelogram();
                                if (parsedData.command !== 'pause' && parsedData.command !== 'export') resetSimulation(); 
                                setTimeout(() => { autoFit(); }, 50); triggerToast(toastContent);
@@ -488,7 +502,7 @@
                    if (isCmdParsed && fullText.includes('<msg>')) {
                        const msgMatch = fullText.split('<msg>')[1];
                        if (msgMatch) {
-                           botMsg.text = msgMatch.replace('</msg>', ''); // 实时更新 Vue 响应式文本
+                           botMsg.text = msgMatch.replace('</msg>', ''); 
                            const chatBox = document.getElementById('chat-box'); 
                            if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
                        }
